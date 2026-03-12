@@ -1,0 +1,166 @@
+import subprocess
+import time
+import os
+import requests
+from datetime import datetime
+
+COMPARTMENT_ID = os.environ['OCI_TENANCY']
+USER = os.environ['OCI_USER']
+FINGERPRINT = os.environ['OCI_FINGERPRINT']
+REGION = os.environ['OCI_REGION']
+PRIVATE_KEY = os.environ['OCI_PRIVATE_KEY']
+SSH_PUBLIC_KEY = os.environ['OCI_SSH_PUBLIC_KEY']
+TELEGRAM_TOKEN = os.environ['TELEGRAM_BOT_TOKEN']
+TELEGRAM_CHAT_ID = os.environ['TELEGRAM_CHAT_ID']
+
+RETRY_INTERVAL = 60
+
+# Use home directory — works for both root and non-root
+HOME = os.path.expanduser("~")
+OCI_DIR = os.path.join(HOME, '.oci')
+OCI_KEY = os.path.join(OCI_DIR, 'oci_api_key.pem')
+OCI_CONFIG = os.path.join(OCI_DIR, 'config')
+OCI_BIN = os.path.join(HOME, 'bin', 'oci')
+
+def setup_oci():
+    os.makedirs(OCI_DIR, exist_ok=True)
+    with open(OCI_KEY, 'w') as f:
+        f.write(PRIVATE_KEY)
+    os.chmod(OCI_KEY, 0o600)
+
+    config = f"""[DEFAULT]
+user={USER}
+fingerprint={FINGERPRINT}
+tenancy={COMPARTMENT_ID}
+region={REGION}
+key_file={OCI_KEY}
+"""
+    with open(OCI_CONFIG, 'w') as f:
+        f.write(config)
+    os.chmod(OCI_CONFIG, 0o600)
+    print(f"✅ OCI configured at {OCI_DIR}")
+
+def send_telegram(message):
+    try:
+        url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage"
+        requests.post(url, data={
+            'chat_id': TELEGRAM_CHAT_ID,
+            'text': message
+        }, timeout=10)
+        print(f"📱 Telegram sent: {message[:60]}...")
+    except Exception as e:
+        print(f"Telegram error: {e}")
+
+def install_oci_cli():
+    if os.path.exists(OCI_BIN):
+        print("✅ OCI CLI already installed")
+        return
+
+    print("📦 Installing OCI CLI...")
+    ret = os.system(
+        "curl -L https://raw.githubusercontent.com/oracle/oci-cli/master/scripts/install/install.sh "
+        "| bash -s -- --accept-all-defaults"
+    )
+    if ret == 0:
+        print("✅ OCI CLI installed")
+    else:
+        print("❌ OCI CLI install failed!")
+
+    # Add to PATH
+    bin_path = os.path.join(HOME, 'bin')
+    os.environ['PATH'] = f"{bin_path}:{os.environ.get('PATH', '')}"
+
+def try_create_instance():
+    ssh_key_file = '/tmp/ssh_key.pub'
+    with open(ssh_key_file, 'w') as f:
+        f.write(SSH_PUBLIC_KEY)
+
+    # Add HOME/bin to PATH
+    env = os.environ.copy()
+    env['PATH'] = f"{HOME}/bin:{env.get('PATH', '')}"
+    env['OCI_CLI_SUPPRESS_FILE_PERMISSIONS_WARNING'] = 'True'
+    env['SUPPRESS_LABEL_WARNING'] = 'True'
+
+    cmd = [
+        OCI_BIN, 'compute', 'instance', 'launch',
+        '--compartment-id', COMPARTMENT_ID,
+        '--availability-domain', 'fOzi:AP-MUMBAI-1-AD-1',
+        '--shape', 'VM.Standard.A1.Flex',
+        '--shape-config', '{"ocpus": 4, "memoryInGBs": 24}',
+        '--subnet-id', 'ocid1.subnet.oc1.ap-mumbai-1.aaaaaaaaxckerdunekrhnxdhdpshekiozbgdtojv2yd7y2nhgmg3trissjeq',
+        '--assign-public-ip', 'true',
+        '--display-name', 'n8n-free-instance',
+        '--ssh-authorized-keys-file', ssh_key_file,
+        '--source-details', '{"sourceType":"bootVolume","bootVolumeId":"ocid1.bootvolume.oc1.ap-mumbai-1.abrg6ljr3s7unrot74hlo4i33kmseigkdcyfwvnq5dq2yikhhhrqpucx5xwa"}',
+    ]
+
+    result = subprocess.run(cmd, capture_output=True, text=True, env=env, timeout=120)
+    return result.stdout + result.stderr
+
+def main():
+    print("=" * 50)
+    print("🚀 VORTEX OCI Hunter — Render.com")
+    print(f"   Home: {HOME}")
+    print(f"   OCI Binary: {OCI_BIN}")
+    print("=" * 50)
+
+    install_oci_cli()
+    setup_oci()
+
+    send_telegram(
+        "🚀 OCI Hunter started on Render.com!\n"
+        "Checking every 60 seconds until instance is created.\n"
+        "Region: AP-MUMBAI-1\n"
+        "Shape: A1.Flex 4CPU/24GB"
+    )
+
+    attempt = 1
+    while True:
+        now = datetime.utcnow().strftime('%Y-%m-%d %H:%M:%S UTC')
+        print(f"\n[{now}] Attempt #{attempt}...")
+
+        try:
+            result = try_create_instance()
+            print(result[:500])
+
+            if '"lifecycle-state"' in result:
+                print("\n✅ SUCCESS! Instance created!")
+                send_telegram(
+                    "✅ OCI Instance Created!\n\n"
+                    "Shape: A1.Flex 4CPU/24GB\n"
+                    "Boot: n8n old volume attached\n"
+                    "Region: AP-MUMBAI-1\n\n"
+                    "Go to OCI Console to get the IP!\n"
+                    "Then SSH in and verify n8n is running!"
+                )
+                # Keep alive — don't let Render restart
+                while True:
+                    print("✅ Hunter complete. Sleeping...")
+                    time.sleep(3600)
+
+            elif 'Out of host capacity' in result:
+                print(f"❌ Out of capacity. Waiting {RETRY_INTERVAL}s...")
+
+            elif 'QuotaExceeded' in result or 'bootVolumeQuota' in result:
+                print("❌ Quota exceeded!")
+                send_telegram("⚠️ OCI Quota Exceeded! Check OCI Console.")
+                time.sleep(300)
+
+            elif 'NotAuthenticated' in result or 'InvalidParameter' in result:
+                print("❌ Auth error — check your secrets!")
+                send_telegram("❌ OCI Auth Error! Check environment variables.")
+                time.sleep(600)
+
+            else:
+                print(f"❌ Unknown error: {result[:300]}")
+
+        except subprocess.TimeoutExpired:
+            print("⏱️ Request timed out — retrying...")
+        except Exception as e:
+            print(f"❌ Exception: {e}")
+
+        attempt += 1
+        time.sleep(RETRY_INTERVAL)
+
+if __name__ == '__main__':
+    main()
