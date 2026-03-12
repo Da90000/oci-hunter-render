@@ -58,7 +58,7 @@ def try_create_instance():
 
     # Use oci installed via pip (available as module)
     cmd = [
-        'python', '-m', 'oci', 'compute', 'instance', 'launch',
+        '/app/.venv/bin/oci', 'compute', 'instance', 'launch',
         '--compartment-id', COMPARTMENT_ID,
         '--availability-domain', 'fOzi:AP-MUMBAI-1-AD-1',
         '--shape', 'VM.Standard.A1.Flex',
