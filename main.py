@@ -13,7 +13,7 @@ SSH_PUBLIC_KEY = os.environ['OCI_SSH_PUBLIC_KEY']
 TELEGRAM_TOKEN = os.environ['TELEGRAM_BOT_TOKEN']
 TELEGRAM_CHAT_ID = os.environ['TELEGRAM_CHAT_ID']
 
-RETRY_INTERVAL = 60
+RETRY_INTERVAL = 90
 HOME = os.path.expanduser("~")
 OCI_DIR = os.path.join(HOME, '.oci')
 OCI_KEY = os.path.join(OCI_DIR, 'oci_api_key.pem')
