@@ -21,9 +21,23 @@ OCI_CONFIG = os.path.join(OCI_DIR, 'config')
 
 def setup_oci():
     os.makedirs(OCI_DIR, exist_ok=True)
+    
+    # Fix newlines in private key (env vars can strip them)
+    private_key = PRIVATE_KEY.replace('\\n', '\n')
+    
+    # Ensure proper PEM format
+    if '-----BEGIN' in private_key and '\n' not in private_key.split('-----BEGIN')[1][:10]:
+        # Key is all on one line, needs reformatting
+        private_key = private_key.replace(' ', '\n')
+        private_key = private_key.replace('-----BEGIN\nRSA\nPRIVATE\nKEY-----', '-----BEGIN RSA PRIVATE KEY-----')
+        private_key = private_key.replace('-----END\nRSA\nPRIVATE\nKEY-----', '-----END RSA PRIVATE KEY-----')
+    
     with open(OCI_KEY, 'w') as f:
-        f.write(PRIVATE_KEY)
+        f.write(private_key)
+        if not private_key.endswith('\n'):
+            f.write('\n')
     os.chmod(OCI_KEY, 0o600)
+    
     config = f"""[DEFAULT]
 user={USER}
 fingerprint={FINGERPRINT}
@@ -34,7 +48,13 @@ key_file={OCI_KEY}
     with open(OCI_CONFIG, 'w') as f:
         f.write(config)
     os.chmod(OCI_CONFIG, 0o600)
+    
+    # Verify key file
+    with open(OCI_KEY, 'r') as f:
+        content = f.read()
     print(f"✅ OCI configured at {OCI_DIR}")
+    print(f"   Key lines: {len(content.splitlines())}")
+    print(f"   Key starts: {content[:30]}")
 
 def send_telegram(message):
     try:
