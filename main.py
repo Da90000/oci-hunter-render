@@ -2,7 +2,7 @@ import subprocess
 import time
 import os
 import requests
-from datetime import datetime
+from datetime import datetime, timezone
 
 COMPARTMENT_ID = os.environ['OCI_TENANCY']
 USER = os.environ['OCI_USER']
@@ -14,20 +14,16 @@ TELEGRAM_TOKEN = os.environ['TELEGRAM_BOT_TOKEN']
 TELEGRAM_CHAT_ID = os.environ['TELEGRAM_CHAT_ID']
 
 RETRY_INTERVAL = 60
-
-# Use home directory — works for both root and non-root
 HOME = os.path.expanduser("~")
 OCI_DIR = os.path.join(HOME, '.oci')
 OCI_KEY = os.path.join(OCI_DIR, 'oci_api_key.pem')
 OCI_CONFIG = os.path.join(OCI_DIR, 'config')
-OCI_BIN = os.path.join(HOME, 'bin', 'oci')
 
 def setup_oci():
     os.makedirs(OCI_DIR, exist_ok=True)
     with open(OCI_KEY, 'w') as f:
         f.write(PRIVATE_KEY)
     os.chmod(OCI_KEY, 0o600)
-
     config = f"""[DEFAULT]
 user={USER}
 fingerprint={FINGERPRINT}
@@ -51,38 +47,18 @@ def send_telegram(message):
     except Exception as e:
         print(f"Telegram error: {e}")
 
-def install_oci_cli():
-    if os.path.exists(OCI_BIN):
-        print("✅ OCI CLI already installed")
-        return
-
-    print("📦 Installing OCI CLI...")
-    ret = os.system(
-        "curl -L https://raw.githubusercontent.com/oracle/oci-cli/master/scripts/install/install.sh "
-        "| bash -s -- --accept-all-defaults"
-    )
-    if ret == 0:
-        print("✅ OCI CLI installed")
-    else:
-        print("❌ OCI CLI install failed!")
-
-    # Add to PATH
-    bin_path = os.path.join(HOME, 'bin')
-    os.environ['PATH'] = f"{bin_path}:{os.environ.get('PATH', '')}"
-
 def try_create_instance():
     ssh_key_file = '/tmp/ssh_key.pub'
     with open(ssh_key_file, 'w') as f:
         f.write(SSH_PUBLIC_KEY)
 
-    # Add HOME/bin to PATH
     env = os.environ.copy()
-    env['PATH'] = f"{HOME}/bin:{env.get('PATH', '')}"
     env['OCI_CLI_SUPPRESS_FILE_PERMISSIONS_WARNING'] = 'True'
     env['SUPPRESS_LABEL_WARNING'] = 'True'
 
+    # Use oci installed via pip (available as module)
     cmd = [
-        OCI_BIN, 'compute', 'instance', 'launch',
+        'python', '-m', 'oci', 'compute', 'instance', 'launch',
         '--compartment-id', COMPARTMENT_ID,
         '--availability-domain', 'fOzi:AP-MUMBAI-1-AD-1',
         '--shape', 'VM.Standard.A1.Flex',
@@ -99,16 +75,14 @@ def try_create_instance():
 
 def main():
     print("=" * 50)
-    print("🚀 VORTEX OCI Hunter — Render.com")
+    print("🚀 VORTEX OCI Hunter — Railway.app")
     print(f"   Home: {HOME}")
-    print(f"   OCI Binary: {OCI_BIN}")
     print("=" * 50)
 
-    install_oci_cli()
     setup_oci()
 
     send_telegram(
-        "🚀 OCI Hunter started on Render.com!\n"
+        "🚀 OCI Hunter started on Railway.app!\n"
         "Checking every 60 seconds until instance is created.\n"
         "Region: AP-MUMBAI-1\n"
         "Shape: A1.Flex 4CPU/24GB"
@@ -116,7 +90,7 @@ def main():
 
     attempt = 1
     while True:
-        now = datetime.utcnow().strftime('%Y-%m-%d %H:%M:%S UTC')
+        now = datetime.now(timezone.utc).strftime('%Y-%m-%d %H:%M:%S UTC')
         print(f"\n[{now}] Attempt #{attempt}...")
 
         try:
@@ -133,7 +107,6 @@ def main():
                     "Go to OCI Console to get the IP!\n"
                     "Then SSH in and verify n8n is running!"
                 )
-                # Keep alive — don't let Render restart
                 while True:
                     print("✅ Hunter complete. Sleeping...")
                     time.sleep(3600)
@@ -147,15 +120,15 @@ def main():
                 time.sleep(300)
 
             elif 'NotAuthenticated' in result or 'InvalidParameter' in result:
-                print("❌ Auth error — check your secrets!")
+                print("❌ Auth error!")
                 send_telegram("❌ OCI Auth Error! Check environment variables.")
                 time.sleep(600)
 
             else:
-                print(f"❌ Unknown error: {result[:300]}")
+                print(f"❌ Unknown: {result[:300]}")
 
         except subprocess.TimeoutExpired:
-            print("⏱️ Request timed out — retrying...")
+            print("⏱️ Timed out — retrying...")
         except Exception as e:
             print(f"❌ Exception: {e}")
 
