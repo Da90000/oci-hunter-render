@@ -1,2 +1,2 @@
-oci
+oci-cli
 requests
